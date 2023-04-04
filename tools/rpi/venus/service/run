@@ -1,0 +1,13 @@
+#!/bin/sh --login
+
+# SMELL - don't know why this symbolic link is needed so the SPI is found
+ln -s /dev/spidev0.0 /dev/spidev0.8
+
+export PYENV_ROOT="/home/root/.pyenv"
+export PATH=$PATH:/data/pyenv-2.3.13/bin
+command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+
+cd /data/ahoy/tools/rpi
+exec 2>&1
+python3 -um hoymiles --log-transactions --verbose --config /data/ahoy/tools/rpi/ahoy.yml

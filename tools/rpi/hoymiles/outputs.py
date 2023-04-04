@@ -7,6 +7,7 @@ Hoymiles output plugin library
 
 import socket
 import logging
+import time
 from datetime import datetime, timezone
 from hoymiles.decoders import StatusResponse, HardwareInfoResponse
 from hoymiles import HOYMILES_TRANSACTION_LOGGING, HOYMILES_DEBUG_LOGGING
@@ -443,3 +444,156 @@ class VolkszaehlerOutputPlugin(OutputPluginFactory):
             except ValueError as e:
                 logging.warning('Could not send data to volkszaehler instance: %s' % e)
         return
+
+class VenusOSDBusOutputPlugin(OutputPluginFactory):
+    def __init__(self, config, **params):
+        super().__init__(**params)
+        #self.session = session
+        #self.serial = config.get('serial')
+        #self.baseurl = config.get('url', 'http://localhost/middleware/')
+        #self.channels = dict()
+
+        #for channel in config.get('channels', []):
+        #    uid = channel.get('uid', None)
+        #    ctype = channel.get('type')
+        #    # if uid and ctype:
+        #    if ctype:
+        #        self.channels[ctype] = uid
+        import sys
+        import os
+
+        from gi.repository import GLib as gobject
+
+        sys.path.insert(1, os.path.join(os.path.dirname(__file__), '/opt/victronenergy/dbus-systemcalc-py/ext/velib_python'))
+        from vedbus import VeDbusService
+
+        from dbus.mainloop.glib import DBusGMainLoop
+
+        # Have a mainloop, so we can send/receive asynchronous calls to and from dbus
+        DBusGMainLoop(set_as_default=True)
+
+        #formatting 
+        _kwh = lambda p, v: (str(round(v, 2)) + 'KWh')
+        _a = lambda p, v: (str(round(v, 1)) + 'A')
+        _w = lambda p, v: (str(round(v, 1)) + 'W')
+        _v = lambda p, v: (str(round(v, 1)) + 'V') 
+
+        paths ={
+            '/Ac/Energy/Forward': {'initial': None, 'textformat': _kwh}, # energy produced by pv inverter
+            '/Ac/Energy/Forward_today': {'initial': None, 'textformat': _w}, # energy produced by pv inverter
+            '/Ac/Power': {'initial': None, 'textformat': _w},        
+            '/Ac/L1/Voltage': {'initial': None, 'textformat': _v},
+            '/Ac/L2/Voltage': {'initial': None, 'textformat': _v},
+            '/Ac/L3/Voltage': {'initial': None, 'textformat': _v},
+            '/Ac/L1/Current': {'initial': None, 'textformat': _a},
+            '/Ac/L2/Current': {'initial': None, 'textformat': _a},
+            '/Ac/L3/Current': {'initial': None, 'textformat': _a},
+            '/Ac/L1/Power': {'initial': None, 'textformat': _w},
+            '/Ac/L2/Power': {'initial': None, 'textformat': _w},
+            '/Ac/L3/Power': {'initial': None, 'textformat': _w},
+            '/Ac/L1/Energy/Forward': {'initial': None, 'textformat': _kwh},
+            '/Ac/L2/Energy/Forward': {'initial': None, 'textformat': _kwh},
+            '/Ac/L3/Energy/Forward': {'initial': None, 'textformat': _kwh},
+            '/Ac/L1/Energy/Forward_today': {'initial': None, 'textformat': _w},
+            '/Ac/L2/Energy/Forward_today': {'initial': None, 'textformat': _w},
+            '/Ac/L3/Energy/Forward_today': {'initial': None, 'textformat': _w},
+          }
+
+        servicename = 'com.victronenergy.pvinverter'
+        self.deviceinstance = 0
+        connection = "NRF24L01+ Antenna"
+        productname = "AhoyDTU"
+        self.pvinverternumber = 0
+
+        # SMELL: make a config parameter
+        self.pvinverterphase = "L1"
+
+        self.pvinvertername = "Hoymiles"
+        self._dbusservice = VeDbusService("{}.nrf24_{:02d}".format(servicename, self.deviceinstance))
+        self._paths = paths
+        for path, settings in self._paths.items():
+            self._dbusservice.add_path(
+                path, settings['initial'], gettextcallback=settings['textformat'], writeable=True, onchangecallback=self._handlechangedvalue)
+    
+        # Create the management objects, as specified in the ccgx dbus-api document
+        self._dbusservice.add_path('/Mgmt/ProcessName', __file__)
+        self._dbusservice.add_path('/Mgmt/ProcessVersion', 'Unkown version, and running on Python ' + sys.version)
+        self._dbusservice.add_path('/Mgmt/Connection', connection)
+    
+        # Create the mandatory objects
+        self._dbusservice.add_path('/DeviceInstance', self.deviceinstance)
+        #self._dbusservice.add_path('/ProductId', 16) # value used in ac_sensor_bridge.cpp of dbus-cgwacs
+        self._dbusservice.add_path('/ProductId', 0xFFFF) # id assigned by Victron Support from SDM630v2.py
+        self._dbusservice.add_path('/ProductName', productname)
+        self._dbusservice.add_path('/CustomName', self.pvinvertername)
+        self._dbusservice.add_path('/Connected', 1)
+
+        self._dbusservice.add_path('/Latency', None)
+        self._dbusservice.add_path('/FirmwareVersion', '0.0')
+        self._dbusservice.add_path('/HardwareVersion', '0')
+        self._dbusservice.add_path('/Position', 0) # normaly only needed for pvinverter
+        self._dbusservice.add_path('/Serial', self.inverter_ser)
+        self._dbusservice.add_path('/UpdateIndex', 0)
+        self._dbusservice.add_path('/StatusCode', 0)  # Dummy path so VRM detects us as a PV-inverter.
+    
+    def _handlechangedvalue(self, path, value):
+        logging.debug("someone else updated %s to %s" % (path, value))
+        return True # accept the change
+
+    def disco(self, **params):
+        #self.session.close()            # closing the connection
+        return
+
+    def store_status(self, response, **params):
+        """
+        Publish StatusResponse object
+
+        :param hoymiles.decoders.StatusResponse response: StatusResponse object
+
+        :raises ValueError: when response is not instance of StatusResponse
+        """
+        data = response.__dict__()
+
+        if isinstance(response, StatusResponse):
+            ts = int(round(data['time'].timestamp() * 1000))
+
+            if HOYMILES_DEBUG_LOGGING:
+                logging.debug(f'Venus OS DBus: {ts}')
+
+            self._dbusservice['/Serial'] = data["inverter_ser"]
+
+            # AC Data
+            phase_id = 0
+            pre = f'/Ac/{self.pvinverterphase}'
+
+            for phase in data['phases']:
+                logging.info(f'Venus OS DBus: power{phase_id}: {phase["power"]}W / today: {data["yield_today"]}Wh') 
+                self._dbusservice[pre + '/Voltage'] = phase['voltage']
+                self._dbusservice[pre + '/Current'] = phase['current']
+                power = phase['power']
+                self._dbusservice[pre + '/Power'] = power
+                self._dbusservice['/Ac/Power'] = power
+                if power > 0:
+                    self._dbusservice[pre + '/Energy/Forward'] = data['yield_total']
+                    self._dbusservice['/Ac/Energy/Forward'] = data['yield_total']
+                self._dbusservice[pre + '/Energy/Forward_today'] = data['yield_today']
+                self._dbusservice['/Ac/Energy/Forward_today'] = data['yield_today']
+
+                phase_id = phase_id + 1
+
+        elif isinstance(response, HardwareInfoResponse):
+            self._dbusservice['/FirmwareVersion'] = f'{data["FW_ver_maj"]}.{data["FW_ver_min"]}.{data["FW_ver_pat"]}'
+            self._dbusservice['/HardwareVersion'] = f'{data["FW_HW_ID"]}'
+
+        self._update_index()
+
+
+        return
+
+    def _update_index(self):
+        # increment UpdateIndex - to show that new data is available
+        index = self._dbusservice['/UpdateIndex'] + 1  # increment index
+        if index > 255:   # maximum value of the index
+            index = 0       # overflow from 255 to 0
+        self._dbusservice['/UpdateIndex'] = index
+        self._lastUpdate = time.time()

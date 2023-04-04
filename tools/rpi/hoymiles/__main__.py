@@ -40,6 +40,9 @@ def signal_handler(sig_num, frame):
   if volkszaehler_client:
      volkszaehler_client.disco()
 
+  if venusosdbus_client:
+     venusosdbus_client.disco()
+
   sys.exit(0)
 
 signal(SIGINT,  signal_handler)   # Interrupt from keyboard (CTRL + C)
@@ -119,6 +122,7 @@ class SunsetHandler:
 
 def main_loop(ahoy_config):
     """Main loop"""
+
     inverters = [
             inverter for inverter in ahoy_config.get('inverters', [])
             if not inverter.get('disabled', False)]
@@ -130,8 +134,10 @@ def main_loop(ahoy_config):
     loop_interval = ahoy_config.get('interval', 1)
     transmit_retries = ahoy_config.get('transmit_retries', 5)
 
+    loop_forever = ahoy_config.get("loop_forever", True)
+
+    global do_init
     try:
-        do_init = True
         while True:
             sunset.checkWaitForSunrise()
 
@@ -152,6 +158,14 @@ def main_loop(ahoy_config):
                 time_to_sleep = loop_interval - (time.time() - t_loop_start)
                 if time_to_sleep > 0:
                     time.sleep(time_to_sleep)
+            if not loop_forever:
+                # SMELL: starting and leaving the main_loop every second with all the initialization is really bad
+                return True
+            else:
+                if loop_interval > 0:
+                    time_to_sleep = loop_interval - (time.time() - t_loop_start)
+                    if time_to_sleep > 0:
+                        time.sleep(time_to_sleep)
 
     except Exception as e:
         logging.fatal('Exception catched: %s' % e)
@@ -245,10 +259,15 @@ def poll_inverter(inverter, dtu_ser, do_init, retries):
                 if volkszaehler_client:
                    volkszaehler_client.store_status(result)
 
+                if venusosdbus_client:
+                   venusosdbus_client.store_status(result)
+
             # check decoder object for output
             if isinstance(result, hoymiles.decoders.HardwareInfoResponse):
                 if mqtt_client:
                    mqtt_client.store_status(result, topic=inverter.get('mqtt', {}).get('topic', None))
+                if venusosdbus_client:
+                   venusosdbus_client.store_status(result)
 
 
 def mqtt_on_command(client, userdata, message):
@@ -387,6 +406,13 @@ if __name__ == '__main__':
         from .outputs import VolkszaehlerOutputPlugin
         volkszaehler_client = VolkszaehlerOutputPlugin(volkszaehler_config)
 
+    # create Venus OS DBus - client object
+    venusosdbus_client = None
+    venusosdbus_config = ahoy_config.get('venusosdbus', {})
+    if venusosdbus_config and not venusosdbus_config.get('disabled', False):
+        from .outputs import VenusOSDBusOutputPlugin
+        venusosdbus_client = VenusOSDBusOutputPlugin(venusosdbus_config)
+
     event_message_index = {}
     command_queue = {}
     mqtt_command_topic_subs = []
@@ -406,6 +432,17 @@ if __name__ == '__main__':
             mqtt_client.subscribe(topic_item[1])
             mqtt_command_topic_subs.append(topic_item)
 
-    # start main-loop
-    main_loop(ahoy_config)
+    do_init = True
+    if venusosdbus_client:
+        from gi.repository import GLib as gobject
+
+        mainloop = gobject.MainLoop()
+        ahoy_config["loop_forever"] = False
+
+        # SMELL: starting the main_loop every second with all the initialization is really bad (but works for now)
+        gobject.timeout_add_seconds(ahoy_config.get('interval', 1), main_loop, ahoy_config)
+        mainloop.run()
+    else:
+        # start main-loop
+        main_loop(ahoy_config)
 

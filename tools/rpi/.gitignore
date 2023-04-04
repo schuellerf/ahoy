@@ -9,3 +9,7 @@ venv/
 
 # vim leftovers
 **.swp
+*~
+
+# real config
+ahoy.yml

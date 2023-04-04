@@ -117,4 +117,7 @@ ahoy:
         s_maxpower: 405                   # String 3 max power in inverter
       - s_name: 'String 4 down'           # String 4 name
         s_maxpower: 410                   # String 4 max power in inverter
-      
+
+  # Support for Venus OS https://github.com/victronenergy/venus
+  venusosdbus:
+    disabled: true
