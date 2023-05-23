@@ -13,6 +13,7 @@ import logging
 import crcmod
 from .decoders import *
 from os import environ
+from enum import IntEnum
 
 try:
   # OSI Layer 2 driver for nRF24L01 on Arduino & Raspberry Pi/Linux Devices
@@ -39,6 +40,12 @@ f_crc8 = crcmod.mkCrcFun(0x101, initCrc=0, xorOut=0)
 
 HOYMILES_TRANSACTION_LOGGING=False
 HOYMILES_DEBUG_LOGGING=False
+
+class MessageID(IntEnum):
+    TX_REQ_INFO       = 0x15
+    TX_REQ_DEVCONTROL = 0x51
+    ALL_FRAMES        = 0x80
+    SINGLE_FRAME      = 0x81
 
 def ser_to_hm_addr(inverter_ser):
     """
@@ -484,9 +491,9 @@ def frame_payload(payload):
 
     return payload
 
-def compose_esb_fragment(fragment, seq=b'\x80', src=99999999, dst=1, **params):
+def compose_esb_fragment(fragment, seq=b'\x80', src=99999999, dst=1, mid=MessageID.TX_REQ_INFO, **params):
     """
-    Build standart ESB request fragment
+    Build standard ESB request fragment
 
     :param bytes fragment: up to 16 bytes payload chunk
     :param seq: frame sequence byte
@@ -502,7 +509,7 @@ def compose_esb_fragment(fragment, seq=b'\x80', src=99999999, dst=1, **params):
     if len(fragment) > 17:
         raise ValueError(f'ESB fragment exeeds mtu: Fragment size {len(fragment)} bytes')
 
-    packet = b'\x15'
+    packet = struct.pack('B', mid)
     packet = packet + ser_to_hm_addr(dst)
     packet = packet + ser_to_hm_addr(src)
     packet = packet + seq

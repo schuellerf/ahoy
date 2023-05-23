@@ -72,6 +72,20 @@ class InfoCommands(IntEnum):
     GetSelfCheckState = 30        # 0x1e
     InitDataState = 0xff
 
+
+class DevControlCommands(IntEnum):
+    TurnOn                  = 0  # 0x00
+    TurnOff                 = 1  # 0x01
+    Restart                 = 2  # 0x02
+    Lock                    = 3  # 0x03
+    Unlock                  = 4  # 0x04
+    ActivePowerContr        = 11 # 0x0b
+    ReactivePowerContr      = 12 # 0x0c
+    PFSet                   = 13 # 0x0d
+    CleanState_LockAndAlarm = 20 # 0x14
+    SelfInspection          = 40 # 0x28, self-inspection of grid-connected protection files
+    Init                    = 0xff
+
 class SunsetHandler:
     def __init__(self, sunset_config):
         self.suntimes = None
@@ -188,13 +202,13 @@ def poll_inverter(inverter, dtu_ser, do_init, retries):
     # Queue at least status data request
     inv_str = str(inverter_ser)
     if do_init:
-      command_queue[inv_str].append(hoymiles.compose_send_time_payload(InfoCommands.InverterDevInform_All))
+      command_queue[inv_str].append((hoymiles.compose_send_time_payload(InfoCommands.InverterDevInform_All),hoymiles.MessageID.TX_REQ_INFO))
 #      command_queue[inv_str].append(hoymiles.compose_send_time_payload(InfoCommands.SystemConfigPara))
-    command_queue[inv_str].append(hoymiles.compose_send_time_payload(InfoCommands.RealTimeRunData_Debug))
+    command_queue[inv_str].append((hoymiles.compose_send_time_payload(InfoCommands.RealTimeRunData_Debug),hoymiles.MessageID.TX_REQ_INFO))
 
     # Put all queued commands for current inverter on air
     while len(command_queue[inv_str]) > 0:
-        payload = command_queue[inv_str].pop(0)
+        (payload,mid) = command_queue[inv_str].pop(0)
 
         # Send payload {ttl}-times until we get at least one reponse
         payload_ttl = retries
@@ -209,7 +223,8 @@ def poll_inverter(inverter, dtu_ser, do_init, retries):
                         payload,
                         seq=b'\x80',
                         src=dtu_ser,
-                        dst=inverter_ser
+                        dst=inverter_ser,
+                        mid=mid
                         )))
             response = None
             while com.rxtx():
@@ -248,7 +263,7 @@ def poll_inverter(inverter, dtu_ser, do_init, retries):
                 if 'event_count' in data:
                     if event_message_index[inv_str] < data['event_count']:
                         event_message_index[inv_str] = data['event_count']
-                        command_queue[inv_str].append(hoymiles.compose_send_time_payload(InfoCommands.AlarmData, alarm_id=event_message_index[inv_str]))
+                        command_queue[inv_str].append((hoymiles.compose_send_time_payload(InfoCommands.AlarmData, alarm_id=event_message_index[inv_str]), hoymiles.MessageID.TX_REQ_INFO))
 
                 if mqtt_client:
                    mqtt_client.store_status(result, topic=inverter.get('mqtt', {}).get('topic', None))
@@ -313,7 +328,7 @@ def mqtt_on_command(client, userdata, message):
             # commands must start with \x80
             if payload[0] == 0x80:
                 command_queue[str(inverter_ser)].append(
-                    hoymiles.frame_payload(payload[1:]))
+                    (hoymiles.frame_payload(payload[1:]), hoymiles.MessageID.TX_REQ_INFO))
 
 def init_logging(ahoy_config):
     log_config = ahoy_config.get('logging')
