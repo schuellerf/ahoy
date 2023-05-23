@@ -494,9 +494,9 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
             '/Ac/L1/Energy/Forward': {'initial': None, 'textformat': _kwh},
             '/Ac/L2/Energy/Forward': {'initial': None, 'textformat': _kwh},
             '/Ac/L3/Energy/Forward': {'initial': None, 'textformat': _kwh},
-            '/Ac/L1/Energy/Forward_today': {'initial': None, 'textformat': _w},
-            '/Ac/L2/Energy/Forward_today': {'initial': None, 'textformat': _w},
-            '/Ac/L3/Energy/Forward_today': {'initial': None, 'textformat': _w},
+            '/Ac/L1/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
+            '/Ac/L2/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
+            '/Ac/L3/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
           }
 
         servicename = 'com.victronenergy.pvinverter'
@@ -574,10 +574,10 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
                 self._dbusservice[pre + '/Power'] = power
                 self._dbusservice['/Ac/Power'] = power
                 if power > 0:
-                    self._dbusservice[pre + '/Energy/Forward'] = data['yield_total']
-                    self._dbusservice['/Ac/Energy/Forward'] = data['yield_total']
-                self._dbusservice[pre + '/Energy/Forward_today'] = data['yield_today']
-                self._dbusservice['/Ac/Energy/Forward_today'] = data['yield_today']
+                    self._dbusservice[pre + '/Energy/Forward'] = data['yield_total']/1000
+                    self._dbusservice['/Ac/Energy/Forward'] = data['yield_total']/1000
+                self._dbusservice[pre + '/Energy/Forward_today'] = data['yield_today']/1000
+                self._dbusservice['/Ac/Energy/Forward_today'] = data['yield_today']/1000
 
                 phase_id = phase_id + 1
 
