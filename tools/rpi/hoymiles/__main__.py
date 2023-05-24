@@ -362,6 +362,11 @@ def set_max_power(value):
             payload = hoymiles.compose_power_limit_payload(hoymiles.DevControlCommands.TurnOff)
             command_queue[inv_str].append((payload, hoymiles.MessageID.TX_REQ_DEVCONTROL))
             logging.debug(f'Inverter {inv_str}: Theoretical Payload Power: ' + hoymiles.hexify_payload(payload))
+
+            if mqtt_client:
+                dtu_name = ahoy_config.get('dtu', {}).get('name', 'hoymiles-dtu')
+                dtu_ser = ahoy_config.get('dtu', {}).get('serial', None)
+                mqtt_client.info2mqtt({'topic': f'{dtu_name}/{dtu_ser}'}, {'AC_Max_Power': int(0)})
             return
 
         #  largest is the HM-1500 I guess
@@ -379,6 +384,10 @@ def set_max_power(value):
         command_queue[inv_str].append((payload, hoymiles.MessageID.TX_REQ_DEVCONTROL))
         logging.debug(f'Inverter {inv_str}: Theoretical Payload Power: ' + hoymiles.hexify_payload(payload))
 
+        if mqtt_client:
+            dtu_name = ahoy_config.get('dtu', {}).get('name', 'hoymiles-dtu')
+            dtu_ser = ahoy_config.get('dtu', {}).get('serial', None)
+            mqtt_client.info2mqtt({'topic': f'{dtu_name}/{dtu_ser}'}, {'AC_Max_Power': int(value)})
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Ahoy - Hoymiles solar inverter gateway', prog="hoymiles")
