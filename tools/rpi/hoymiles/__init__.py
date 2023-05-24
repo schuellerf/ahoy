@@ -40,12 +40,36 @@ f_crc8 = crcmod.mkCrcFun(0x101, initCrc=0, xorOut=0)
 
 HOYMILES_TRANSACTION_LOGGING=False
 HOYMILES_DEBUG_LOGGING=False
+POWER_UNLIMITED = 0xffff
 
 class MessageID(IntEnum):
     TX_REQ_INFO       = 0x15
     TX_REQ_DEVCONTROL = 0x51
+
+class PacketID(IntEnum):
     ALL_FRAMES        = 0x80
     SINGLE_FRAME      = 0x81
+
+class DevControlCommands(IntEnum):
+    TurnOn                  = 0  # 0x00
+    TurnOff                 = 1  # 0x01
+    Restart                 = 2  # 0x02
+    Lock                    = 3  # 0x03
+    Unlock                  = 4  # 0x04
+    ActivePowerContr        = 11 # 0x0b
+    ReactivePowerContr      = 12 # 0x0c
+    PFSet                   = 13 # 0x0d
+    CleanState_LockAndAlarm = 20 # 0x14
+    SelfInspection          = 40 # 0x28, self-inspection of grid-connected protection files
+    Init                    = 0xff
+
+
+class PowerLimitControlType(IntEnum):
+    AbsolutNonPersistent = 0   # 0x0000
+    RelativNonPersistent = 1   # 0x0001
+    AbsolutPersistent = 256    # 0x0100
+    RelativPersistent = 257    # 0x0101
+
 
 def ser_to_hm_addr(inverter_ser):
     """
@@ -491,17 +515,19 @@ def frame_payload(payload):
 
     return payload
 
-def compose_esb_fragment(fragment, seq=b'\x80', src=99999999, dst=1, mid=MessageID.TX_REQ_INFO, **params):
+def compose_esb_fragment(fragment, seq=PacketID.ALL_FRAMES, src=99999999, dst=1, mid=MessageID.TX_REQ_INFO, **params):
     """
     Build standard ESB request fragment
 
     :param bytes fragment: up to 16 bytes payload chunk
     :param seq: frame sequence byte
-    :type seq: bytes
+    :type seq: int
     :param src: dtu address
     :type src: int
     :param dst: inverter address
     :type dst: int
+    :param mid: Message ID to be used while packing the fragment
+    :type mid: MessageID
     :return: esb frame fragment
     :rtype: bytes
     :raises ValueError: if fragment size larger 16 byte
@@ -512,7 +538,7 @@ def compose_esb_fragment(fragment, seq=b'\x80', src=99999999, dst=1, mid=Message
     packet = struct.pack('B', mid)
     packet = packet + ser_to_hm_addr(dst)
     packet = packet + ser_to_hm_addr(src)
-    packet = packet + seq
+    packet = packet + struct.pack('B', seq)
 
     packet = packet + fragment
 
@@ -521,17 +547,19 @@ def compose_esb_fragment(fragment, seq=b'\x80', src=99999999, dst=1, mid=Message
 
     return packet
 
-def compose_esb_packet(packet, mtu=17, **params):
+def compose_esb_packet(packet, mtu=17, mid=MessageID.TX_REQ_INFO, **params):
     """
     Build ESB packet, chunk packet
 
     :param bytes packet: payload data
     :param mtu: maximum transmission unit per frame (default: 17)
     :type mtu: int
+    :param mid: Message ID to be used while creating the packet
+    :type mid: MessageID
     :yields: fragment
     """
     for i in range(0, len(packet), mtu):
-        fragment = compose_esb_fragment(packet[i:i+mtu], **params)
+        fragment = compose_esb_fragment(packet[i:i+mtu], mid=mid, **params)
         yield fragment
 
 def compose_send_time_payload(cmdId, alarm_id=0):
@@ -553,6 +581,31 @@ def compose_send_time_payload(cmdId, alarm_id=0):
     payload = payload + struct.pack('>H', alarm_id)   # 18..19
     payload = payload + b'\x00\x00\x00\x00'           # 20..23
 
+    return frame_payload(payload)
+
+def compose_power_limit_payload(cmdId, power_limit=POWER_UNLIMITED, persistence=PowerLimitControlType.AbsolutNonPersistent):
+    """
+
+    :param cmdId:
+    :param power_limit: Limit in Watt - 0xffff = 65535 W Limit -> unlimited
+    :type power_limit: int
+    :param persistence: If the limit should be absolute/relative and persistent or not
+    :type persistence: PowerLimitControlType
+    :return: payload
+    :rtype: bytes
+    """
+    payload = struct.pack('>B', cmdId)                # 10
+    payload = payload + b'\x00'                       # 11
+    if DevControlCommands.ActivePowerContr <= cmdId <= DevControlCommands.PFSet:
+        # send in 10th Watts
+
+        # TBD UNLIMITED does not seem to work
+        if power_limit * 10 > POWER_UNLIMITED:
+            payload = payload + struct.pack('>H', POWER_UNLIMITED)
+        else:
+            payload = payload + struct.pack('>H', power_limit * 10)
+
+        payload = payload + struct.pack('>H', persistence)
     return frame_payload(payload)
 
 class InverterTransaction:
@@ -697,9 +750,9 @@ class InverterTransaction:
         tr_len = 0
         # Find end frame and extract message frame count
         try:
-            end_frame = next(frame for frame in frames if frame.seq > 0x80)
+            end_frame = next(frame for frame in frames if frame.seq > PacketID.ALL_FRAMES)
             self.time_rx = end_frame.time_rx
-            tr_len = end_frame.seq - 0x80
+            tr_len = end_frame.seq - PacketID.ALL_FRAMES
         except StopIteration:
             seq_last = max(frames, key=lambda frame:frame.seq).seq if len(frames) else 0
             self.__retransmit_frame(seq_last + 1)
@@ -737,7 +790,7 @@ class InverterTransaction:
             return
 
         packet = compose_esb_fragment(b'',
-                seq=int(0x80 + frame_id).to_bytes(1, 'big'),
+                seq=int(PacketID.ALL_FRAMES + frame_id),
                 src=self.dtu_ser,
                 dst=self.inverter_ser)
 

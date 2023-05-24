@@ -446,8 +446,10 @@ class VolkszaehlerOutputPlugin(OutputPluginFactory):
         return
 
 class VenusOSDBusOutputPlugin(OutputPluginFactory):
-    def __init__(self, config, **params):
+    def __init__(self, config, set_max_power_fn=None, **params):
         super().__init__(**params)
+
+        self._set_max_power_fn = set_max_power_fn
         #self.session = session
         #self.serial = config.get('serial')
         #self.baseurl = config.get('url', 'http://localhost/middleware/')
@@ -472,11 +474,12 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
         # Have a mainloop, so we can send/receive asynchronous calls to and from dbus
         DBusGMainLoop(set_as_default=True)
 
-        #formatting 
-        _kwh = lambda p, v: (str(round(v, 2)) + 'KWh')
-        _a = lambda p, v: (str(round(v, 1)) + 'A')
-        _w = lambda p, v: (str(round(v, 1)) + 'W')
-        _v = lambda p, v: (str(round(v, 1)) + 'V') 
+        # formatting
+        # int to also accept strings in rare cases
+        _kwh = lambda p, v: (str(round(int(v), 2)) + 'KWh')
+        _a = lambda p, v: (str(round(int(v), 1)) + 'A')
+        _w = lambda p, v: (str(round(int(v), 1)) + 'W')
+        _v = lambda p, v: (str(round(int(v), 1)) + 'V')
 
         paths ={
             '/Ac/Energy/Forward': {'initial': None, 'textformat': _kwh}, # energy produced by pv inverter
@@ -497,6 +500,7 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
             '/Ac/L1/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
             '/Ac/L2/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
             '/Ac/L3/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
+            '/Ac/MaxPower': {'initial': None, 'textformat': _w},
           }
 
         servicename = 'com.victronenergy.pvinverter'
@@ -538,6 +542,9 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
     
     def _handlechangedvalue(self, path, value):
         logging.debug("someone else updated %s to %s" % (path, value))
+        if path == "/Ac/MaxPower":
+            logging.debug(f"Forward setting Max Power to {value}W")
+            self._set_max_power_fn(int(value))
         return True # accept the change
 
     def disco(self, **params):
@@ -567,7 +574,7 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
             pre = f'/Ac/{self.pvinverterphase}'
 
             for phase in data['phases']:
-                logging.info(f'Venus OS DBus: power{phase_id}: {phase["power"]}W / today: {data["yield_today"]}Wh') 
+                logging.info(f'Venus OS DBus: power {self.pvinverterphase} (id {phase_id}): {phase["power"]}W / today: {data["yield_today"]}Wh')
                 self._dbusservice[pre + '/Voltage'] = phase['voltage']
                 self._dbusservice[pre + '/Current'] = phase['current']
                 power = phase['power']

@@ -72,20 +72,6 @@ class InfoCommands(IntEnum):
     GetSelfCheckState = 30        # 0x1e
     InitDataState = 0xff
 
-
-class DevControlCommands(IntEnum):
-    TurnOn                  = 0  # 0x00
-    TurnOff                 = 1  # 0x01
-    Restart                 = 2  # 0x02
-    Lock                    = 3  # 0x03
-    Unlock                  = 4  # 0x04
-    ActivePowerContr        = 11 # 0x0b
-    ReactivePowerContr      = 12 # 0x0c
-    PFSet                   = 13 # 0x0d
-    CleanState_LockAndAlarm = 20 # 0x14
-    SelfInspection          = 40 # 0x28, self-inspection of grid-connected protection files
-    Init                    = 0xff
-
 class SunsetHandler:
     def __init__(self, sunset_config):
         self.suntimes = None
@@ -221,7 +207,7 @@ def poll_inverter(inverter, dtu_ser, do_init, retries):
                     inverter_ser=inverter_ser,
                     request=next(hoymiles.compose_esb_packet(
                         payload,
-                        seq=b'\x80',
+                        seq=hoymiles.PacketID.ALL_FRAMES,
                         src=dtu_ser,
                         dst=inverter_ser,
                         mid=mid
@@ -251,38 +237,43 @@ def poll_inverter(inverter, dtu_ser, do_init, retries):
                     strings=inverter_strings
                     )
 
-            # get decoder object
-            result = decoder.decode()
-            if hoymiles.HOYMILES_DEBUG_LOGGING:
-               logging.info(f'Decoded: {result.__dict__()}')
+            try:
+                # get decoder object
+                result = decoder.decode()
 
-            # check decoder object for output
-            if isinstance(result, hoymiles.decoders.StatusResponse):
+                if hoymiles.HOYMILES_DEBUG_LOGGING:
+                   logging.info(f'Decoded: {result.__dict__()}')
 
-                data = result.__dict__()
-                if 'event_count' in data:
-                    if event_message_index[inv_str] < data['event_count']:
-                        event_message_index[inv_str] = data['event_count']
-                        command_queue[inv_str].append((hoymiles.compose_send_time_payload(InfoCommands.AlarmData, alarm_id=event_message_index[inv_str]), hoymiles.MessageID.TX_REQ_INFO))
+                # check decoder object for output
+                if isinstance(result, hoymiles.decoders.StatusResponse):
 
-                if mqtt_client:
-                   mqtt_client.store_status(result, topic=inverter.get('mqtt', {}).get('topic', None))
-                    
-                if influx_client:
-                   influx_client.store_status(result)
+                    data = result.__dict__()
+                    if 'event_count' in data:
+                        if event_message_index[inv_str] < data['event_count']:
+                            event_message_index[inv_str] = data['event_count']
+                            command_queue[inv_str].append((hoymiles.compose_send_time_payload(InfoCommands.AlarmData, alarm_id=event_message_index[inv_str]), hoymiles.MessageID.TX_REQ_INFO))
 
-                if volkszaehler_client:
-                   volkszaehler_client.store_status(result)
+                    if mqtt_client:
+                       mqtt_client.store_status(result, topic=inverter.get('mqtt', {}).get('topic', None))
 
-                if venusosdbus_client:
-                   venusosdbus_client.store_status(result)
+                    if influx_client:
+                       influx_client.store_status(result)
 
-            # check decoder object for output
-            if isinstance(result, hoymiles.decoders.HardwareInfoResponse):
-                if mqtt_client:
-                   mqtt_client.store_status(result, topic=inverter.get('mqtt', {}).get('topic', None))
-                if venusosdbus_client:
-                   venusosdbus_client.store_status(result)
+                    if volkszaehler_client:
+                       volkszaehler_client.store_status(result)
+
+                    if venusosdbus_client:
+                       venusosdbus_client.store_status(result)
+
+                # check decoder object for output
+                if isinstance(result, hoymiles.decoders.HardwareInfoResponse):
+                    if mqtt_client:
+                       mqtt_client.store_status(result, topic=inverter.get('mqtt', {}).get('topic', None))
+                    if venusosdbus_client:
+                       venusosdbus_client.store_status(result)
+
+            except BaseException as e:
+                print(e)
 
 
 def mqtt_on_command(client, userdata, message):
@@ -357,6 +348,38 @@ def init_logging(ahoy_config):
     dtu_name = ahoy_config.get('dtu',{}).get('name','hoymiles-dtu')
     logging.info(f'start logging for {dtu_name} with level: {logging.root.level}')
 
+
+def set_max_power(value):
+    # sanity check
+    # TODO implement for MI series
+
+    for g_inverter in ahoy_config.get('inverters', []):
+        g_inverter_ser = g_inverter.get('serial')
+        inv_str = str(g_inverter_ser)
+        if value < 2:
+            logging.info(f"Inverter {inv_str}: Max Power {value}W loo low -> Disable power output")
+
+            payload = hoymiles.compose_power_limit_payload(hoymiles.DevControlCommands.TurnOff)
+            command_queue[inv_str].append((payload, hoymiles.MessageID.TX_REQ_DEVCONTROL))
+            logging.debug(f'Inverter {inv_str}: Theoretical Payload Power: ' + hoymiles.hexify_payload(payload))
+            return
+
+        #  largest is the HM-1500 I guess
+        if value > 2000:
+            logging.info(f"Inverter {inv_str}: Max Power {value}W too high -> some sane max power")
+            value = 2000
+
+        logging.info(f"Inverter {inv_str}: Setting Max Power to {value}W")
+
+        payload = hoymiles.compose_power_limit_payload(hoymiles.DevControlCommands.TurnOn)
+        command_queue[inv_str].append((payload, hoymiles.MessageID.TX_REQ_DEVCONTROL))
+        logging.debug(f'Inverter {inv_str}: Theoretical Payload Power: ' + hoymiles.hexify_payload(payload))
+
+        payload = hoymiles.compose_power_limit_payload(hoymiles.DevControlCommands.ActivePowerContr, power_limit=value)
+        command_queue[inv_str].append((payload, hoymiles.MessageID.TX_REQ_DEVCONTROL))
+        logging.debug(f'Inverter {inv_str}: Theoretical Payload Power: ' + hoymiles.hexify_payload(payload))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Ahoy - Hoymiles solar inverter gateway', prog="hoymiles")
     parser.add_argument("-c", "--config-file", nargs="?", required=True,
@@ -395,6 +418,10 @@ if __name__ == '__main__':
     for radio_config in ahoy_config.get('nrf', [{}]):
         hmradio = hoymiles.HoymilesNRF(**radio_config)
 
+    event_message_index = {}
+    command_queue = {}
+    mqtt_command_topic_subs = []
+
     # create MQTT - client object
     mqtt_client = None
     mqtt_config = ahoy_config.get('mqtt', None)
@@ -426,11 +453,7 @@ if __name__ == '__main__':
     venusosdbus_config = ahoy_config.get('venusosdbus', {})
     if venusosdbus_config and not venusosdbus_config.get('disabled', False):
         from .outputs import VenusOSDBusOutputPlugin
-        venusosdbus_client = VenusOSDBusOutputPlugin(venusosdbus_config)
-
-    event_message_index = {}
-    command_queue = {}
-    mqtt_command_topic_subs = []
+        venusosdbus_client = VenusOSDBusOutputPlugin(venusosdbus_config, set_max_power)
 
     for g_inverter in ahoy_config.get('inverters', []):
         g_inverter_ser = g_inverter.get('serial')

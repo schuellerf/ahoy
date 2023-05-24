@@ -10,4 +10,5 @@ eval "$(pyenv init -)"
 
 cd /data/ahoy/tools/rpi
 exec 2>&1
-python3 -um hoymiles --log-transactions --verbose --config /data/ahoy/tools/rpi/ahoy.yml
+python3 -um hoymiles --config /data/ahoy/tools/rpi/ahoy.yml
+#python3 -um hoymiles --log-transactions --verbose --config /data/ahoy/tools/rpi/ahoy.yml
