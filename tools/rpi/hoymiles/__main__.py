@@ -73,7 +73,7 @@ class InfoCommands(IntEnum):
     InitDataState = 0xff
 
 class SunsetHandler:
-    def __init__(self, sunset_config):
+    def __init__(self, sunset_config, do_init=True):
         self.suntimes = None
         if sunset_config and sunset_config.get('disabled', True) == False:
             latitude = sunset_config.get('latitude')
@@ -83,7 +83,8 @@ class SunsetHandler:
             self.nextSunset = self.suntimes.setutc(datetime.utcnow())
             logging.info (f'Todays sunset is at {self.nextSunset} UTC')
         else:
-            logging.info('Sunset disabled.')
+            if do_init:
+                logging.info('Sunset disabled.')
 
     def checkWaitForSunrise(self):
         if not self.suntimes:
@@ -127,7 +128,8 @@ def main_loop(ahoy_config):
             inverter for inverter in ahoy_config.get('inverters', [])
             if not inverter.get('disabled', False)]
 
-    sunset = SunsetHandler(ahoy_config.get('sunset'))
+    global do_init
+    sunset = SunsetHandler(ahoy_config.get('sunset'), do_init)
     dtu_ser = ahoy_config.get('dtu', {}).get('serial', None)
     dtu_name = ahoy_config.get('dtu', {}).get('name', 'hoymiles-dtu')
     sunset.sun_status2mqtt(dtu_ser, dtu_name)
@@ -136,7 +138,6 @@ def main_loop(ahoy_config):
 
     loop_forever = ahoy_config.get("loop_forever", True)
 
-    global do_init
     try:
         while True:
             sunset.checkWaitForSunrise()
