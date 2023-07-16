@@ -155,10 +155,6 @@ def main_loop(ahoy_config):
                 poll_inverter(inverter, dtu_ser, do_init, transmit_retries)
             do_init = False
 
-            if loop_interval > 0:
-                time_to_sleep = loop_interval - (time.time() - t_loop_start)
-                if time_to_sleep > 0:
-                    time.sleep(time_to_sleep)
             if not loop_forever:
                 # SMELL: starting and leaving the main_loop every second with all the initialization is really bad
                 return True
