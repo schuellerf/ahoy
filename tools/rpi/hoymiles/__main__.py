@@ -270,6 +270,7 @@ def poll_inverter(inverter, dtu_ser, do_init, retries):
                        venusosdbus_client.store_status(result)
 
             except BaseException as e:
+                print("Exception while decoding")
                 print(e)
 
 

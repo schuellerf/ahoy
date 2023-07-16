@@ -484,7 +484,7 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
         paths ={
             '/Ac/Energy/Forward': {'initial': None, 'textformat': _kwh}, # energy produced by pv inverter
             '/Ac/Energy/Forward_today': {'initial': None, 'textformat': _w}, # energy produced by pv inverter
-            '/Ac/Power': {'initial': None, 'textformat': _w},        
+            '/Ac/Power': {'initial': None, 'textformat': _w},
             '/Ac/L1/Voltage': {'initial': None, 'textformat': _v},
             '/Ac/L2/Voltage': {'initial': None, 'textformat': _v},
             '/Ac/L3/Voltage': {'initial': None, 'textformat': _v},
@@ -500,7 +500,7 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
             '/Ac/L1/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
             '/Ac/L2/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
             '/Ac/L3/Energy/Forward_today': {'initial': None, 'textformat': _kwh},
-            '/Ac/MaxPower': {'initial': None, 'textformat': _w},
+            '/Ac/MaxPower': {'initial': 0, 'textformat': _w, 'writeable': True},
           }
 
         servicename = 'com.victronenergy.pvinverter'
@@ -517,8 +517,8 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
         self._paths = paths
         for path, settings in self._paths.items():
             self._dbusservice.add_path(
-                path, settings['initial'], gettextcallback=settings['textformat'], writeable=True, onchangecallback=self._handlechangedvalue)
-    
+                path, settings['initial'], gettextcallback=settings['textformat'], writeable=settings.get('writeable', False), onchangecallback=self._handlechangedvalue)
+
         # Create the management objects, as specified in the ccgx dbus-api document
         self._dbusservice.add_path('/Mgmt/ProcessName', __file__)
         self._dbusservice.add_path('/Mgmt/ProcessVersion', 'Unkown version, and running on Python ' + sys.version)
@@ -541,7 +541,7 @@ class VenusOSDBusOutputPlugin(OutputPluginFactory):
         self._dbusservice.add_path('/StatusCode', 0)  # Dummy path so VRM detects us as a PV-inverter.
     
     def _handlechangedvalue(self, path, value):
-        logging.debug("someone else updated %s to %s" % (path, value))
+        logging.debug("I got an update for %s to %s" % (path, value))
         if path == "/Ac/MaxPower":
             logging.debug(f"Forward setting Max Power to {value}W")
             self._set_max_power_fn(int(value))
